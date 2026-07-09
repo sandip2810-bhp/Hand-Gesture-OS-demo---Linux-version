@@ -1,0 +1,4 @@
+sandip@HP-15S:~$ cd "/media/sandip/New Volume/Project/GestureOS"
+sandip@HP-15S:/media/sandip/New Volume/Project/GestureOS$ source venv/bin/activate
+(venv) sandip@HP-15S:/media/sandip/New Volume/Project/GestureOS$ python hand_gesture_demo.py
+

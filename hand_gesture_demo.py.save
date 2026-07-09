@@ -1,0 +1,170 @@
+import cv2
+import mediapipe as mp
+import time
+import subprocess
+
+mp_hands = mp.solutions.hands
+mp_draw = mp.solutions.drawing_utils
+
+# Thumb, index, middle, ring, pinky (tip & pip)
+FINGER_TIPS = [4, 8, 12, 16, 20]
+FINGER_PIPS = [3, 6, 10, 14, 18]
+
+# How long a gesture must be held (seconds)
+GESTURE_HOLD_TIME = 2.5
+
+
+def count_fingers(hand_landmarks):
+    """Return how many fingers are extended."""
+    lm = hand_landmarks.landmark
+    count = 0
+
+    for tip, pip in zip(FINGER_TIPS, FINGER_PIPS):
+        if lm[tip].y < lm[pip].y - 0.02:
+            count += 1
+
+    return count
+
+
+def classify_gesture(finger_count):
+    """
+    Convert noisy finger counts into two stable gestures:
+    - OPEN_PALM: 4 or 5 fingers extended
+    - CLOSED_PALM: 0 or 1 finger extended (four fingers curled down)
+    """
+    if finger_count >= 4:
+        return "OPEN_PALM"
+    if finger_count <= 1:
+        return "CLOSED_PALM"
+    return "NONE"
+
+
+def press_super():
+    """Press Super (Windows) key."""
+    try:
+        subprocess.run(["xdotool", "key", "Super_L"], check=True)
+        print("🪟 Super key pressed")
+    except Exception as e:
+        print("Error pressing Super key:", e)
+
+
+def close_window():
+    """Close active window (Alt+F4)."""
+    try:
+        subprocess.run(["xdotool", "key", "Alt+F4"], check=True)
+        print("❌ Active window closed (Alt+F4)")
+    except Exception as e:
+        print("Error closing window:", e)
+
+
+def main():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("❌ Could not open webcam.")
+        return
+
+    # Gesture state
+    active_gesture = "NONE"
+    gesture_start_time = None
+    action_done_for_hold = False
+
+    with mp_hands.Hands(
+        max_num_hands=1,
+        min_detection_confidence=0.6,
+        min_tracking_confidence=0.6
+    ) as hands:
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("❌ Failed to grab frame.")
+                break
+
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = hands.process(rgb)
+
+            current_gesture = "NONE"
+            finger_count = 0
+
+            if result.multi_hand_landmarks:
+                hand = result.multi_hand_landmarks[0]
+                mp_draw.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
+
+                finger_count = count_fingers(hand)
+                current_gesture = classify_gesture(finger_count)
+            else:
+                # No hand → reset everything
+                current_gesture = "NONE"
+                active_gesture = "NONE"
+                gesture_start_time = None
+                action_done_for_hold = False
+
+            now = time.time()
+
+            # Gesture unchanged
+            if current_gesture == active_gesture and current_gesture != "NONE":
+                if gesture_start_time is not None and not action_done_for_hold:
+                    held_for = now - gesture_start_time
+                    if held_for >= GESTURE_HOLD_TIME:
+                        # Do the action ONCE for this hold
+                        if active_gesture == "OPEN_PALM":
+                            print("✋ Open palm held → SUPER")
+                            press_super()
+                        elif active_gesture == "CLOSED_PALM":
+                            print("🤚 Closed palm held → CLOSE WINDOW")
+                            close_window()
+
+                        action_done_for_hold = True
+            else:
+                # New gesture detected → start new timer
+                if current_gesture == "NONE":
+                    active_gesture = "NONE"
+                    gesture_start_time = None
+                    action_done_for_hold = False
+                else:
+                    active_gesture = current_gesture
+                    gesture_start_time = now
+                    action_done_for_hold = False
+
+            # Overlay info
+            status_text = f"Gesture: {current_gesture}"
+            if active_gesture != "NONE" and gesture_start_time is not None and not action_done_for_hold:
+                remaining = GESTURE_HOLD_TIME - (now - gesture_start_time)
+                if remaining < 0:
+                    remaining = 0
+                status_text += f" | Hold: {remaining:.1f}s"
+
+            cv2.putText(
+                frame,
+                status_text,
+                (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA
+            )
+
+            cv2.putText(
+                frame,
+                f"Fingers: {finger_count}",
+                (10, 70),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA
+            )
+
+            cv2.imshow("Gesture Core (OPEN/CLOSED PALM only) - q to quit", frame)
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
